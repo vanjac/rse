@@ -70,7 +70,8 @@ static inline void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
 void trapezoid(int x1, int ymin1, int ymax1,
                int x2, int ymin2, int ymax2,
                int wallColor, int floorColor, int ceilColor,
-               int * xClipMin, int * xClipMax, int drawToClip);
+               int xClipMin, int xClipMax,
+               int drawToYClipMin, int drawToYClipMax);
 
 static inline fixed cross(fixed x1, fixed y1, fixed x2, fixed y2) {
     return FMULT(x1, y2) - FMULT(y1, x2);
@@ -202,24 +203,39 @@ void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMa
             projectZ(x1, x2, portalSector->zmin-camZ, portalSector->zmax-camZ,
                     &portalScrYMin1, &portalScrYMax1, &portalScrYMin2, &portalScrYMax2);
 
+            if (portalSector->zmax < sector.zmax)
             // top wall
             trapezoid(scrX1, scrYMin1, portalScrYMin1, scrX2, scrYMin2, portalScrYMin2,
                 wall->color, 0, sector.ceilColor,
-                &xClipMin, &xClipMax, 0);
+                    xClipMin, xClipMax, 1, 0);
+            else
+                // ceiling only
+                trapezoid(scrX1, scrYMin1, scrYMin1, scrX2, scrYMin2, scrYMin2,
+                    0, 0, sector.ceilColor,
+                    xClipMin, xClipMax, 1, 0);
+            if (portalSector->zmin > sector.zmin)
             // bottom wall
             trapezoid(scrX1, portalScrYMax1, scrYMax1, scrX2, portalScrYMax2, scrYMax2,
                 wall->color, sector.floorColor, 0,
-                &xClipMin, &xClipMax, 0);
+                xClipMin, xClipMax, 0, 1);
+            else
+                // floor only
+                trapezoid(scrX1, scrYMax1, scrYMax1, scrX2, scrYMax2, scrYMax2,
+                    wall->color, sector.floorColor, 0,
+                    xClipMin, xClipMax, 0, 1);
 
             int newXMin = xClipMin, newXMax = xClipMax;
-            trapezoid(scrX1, portalScrYMin1, portalScrYMax1,
-                scrX2, portalScrYMin2, portalScrYMax2,
-                0, 0, 0, &newXMin, &newXMax, 1);
+            int xstart = scrX1 / FUNIT;
+            int xend = scrX2 / FUNIT;
+            if (xstart > newXMin)
+                newXMin = xstart;
+            if (xend < newXMax)
+                newXMax = xend;
             drawSector(*portalSector, sint, cost, newXMin, newXMax);
         } else {
             trapezoid(scrX1, scrYMin1, scrYMax1, scrX2, scrYMin2, scrYMax2,
                 wall->color, sector.floorColor, sector.ceilColor,
-                &xClipMin, &xClipMax, 0);
+                xClipMin, xClipMax, 0, 0);
         }
     }
 }
@@ -291,7 +307,8 @@ __attribute__((target("arm")))
 void trapezoid(fixed x1, fixed ymin1, fixed ymax1,
                fixed x2, fixed ymin2, fixed ymax2,
                int wallColor, int floorColor, int ceilColor,
-               int * xClipMin, int * xClipMax, int drawToClip) {
+               int xClipMin, int xClipMax,
+               int drawToYClipMin, int drawToYClipMax) {
     fixed xDist = x2 - x1;
     fixed minSlope = FDIV(ymin2 - ymin1, xDist);
     fixed maxSlope = FDIV(ymax2 - ymax1, xDist);
@@ -299,30 +316,14 @@ void trapezoid(fixed x1, fixed ymin1, fixed ymax1,
     int xstart = x1 / FUNIT;
     int xend = x2 / FUNIT;
 
-    if (xstart < *xClipMin)
-        xstart = *xClipMin;
-    else if (drawToClip)
-        *xClipMin = xstart;
-    if (xend > *xClipMax)
-        xend = *xClipMax;
-    else if (drawToClip)
-        *xClipMax = xend;
+    if (xstart < xClipMin)
+        xstart = xClipMin;
+    if (xend > xClipMax)
+        xend = xClipMax;
 
     fixed min = ymin1 + FMULT(xstart*FUNIT - x1, minSlope);
     fixed max = ymax1 + FMULT(xstart*FUNIT - x1, maxSlope);
 
-    if (drawToClip) {
-        for (int x = xstart; x < xend; x++) {
-            int min_i = min / FUNIT;
-            if (min_i > yClipMin[x])
-                yClipMin[x] = min_i;
-            int max_i = max / FUNIT;
-            if (max_i < yClipMax[x])
-                yClipMax[x] = max_i;
-            min += minSlope;
-            max += maxSlope;
-        }
-    } else { // draw to screen
         for (int x = xstart; x < xend; x++) {
             int min_i = min / FUNIT;
             if (min_i < yClipMin[x])
@@ -341,8 +342,11 @@ void trapezoid(fixed x1, fixed ymin1, fixed ymax1,
             if (floorColor)
                 for (; y < yClipMax[x]; y++)
                     MODE4_FB[y][x] = floorColor;
+        if (drawToYClipMin && max_i > yClipMin[x])
+            yClipMin[x] = max_i;
+        if (drawToYClipMax && min_i < yClipMax[x])
+            yClipMax[x] = min_i;
             min += minSlope;
             max += maxSlope;
         }
     }
-}
