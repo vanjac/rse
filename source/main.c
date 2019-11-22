@@ -34,16 +34,16 @@ typedef struct Wall {
 extern const Sector sectors[2];
 const Wall walls[9] = {
     // sector 0 walls
-    { 4*FUNIT,  4*FUNIT, 0x0101, &sectors[1]},
-    { 0*FUNIT,  4*FUNIT, 0x0404, 0},
+    { 4*FUNIT,  4*FUNIT, 0x0101, 0},
+    { 0*FUNIT,  4*FUNIT, 0x0404, &sectors[1]},
     {-3*FUNIT,  2*FUNIT, 0x0505, 0},
     {-3*FUNIT, -4*FUNIT, 0x0404, 0},
     { 4*FUNIT, -4*FUNIT, 0x0606, 0},
     // sector 1 walls
-    { 4*FUNIT,  4*FUNIT, 0x0101, 0},
+    { 4*FUNIT,  4*FUNIT, 0x0101, &sectors[0]},
     { 4*FUNIT,  7*FUNIT, 0x0606, 0},
     { 0*FUNIT,  7*FUNIT, 0x0505, 0},
-    { 0*FUNIT,  4*FUNIT, 0x0101, &sectors[0]}
+    { 0*FUNIT,  4*FUNIT, 0x0101, 0}
 };
 
 const Sector sectors[2] = {
@@ -173,15 +173,16 @@ int main(void) {
 IWRAM_CODE
 __attribute__((target("arm")))
 void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMax) {
-    fixed tX, tY, nextX, nextY;
-    rotatePoint(sector.walls[0].x1 - camX, sector.walls[0].y1 - camY,
-        -sint, cost, &tX, &tY);
-    for (int i = 0; i < sector.numWalls; i++, tX=nextX, tY=nextY) {
-        Wall nextWall = sector.walls[(i + 1) % sector.numWalls];
-        rotatePoint(nextWall.x1 - camX, nextWall.y1 - camY,
-            -sint, cost, &nextX, &nextY);
-        
-        fixed x1 = nextX, y1 = nextY, x2 = tX, y2 = tY;
+    // transformed vertices
+    fixed tX, tY, prevTX, prevTY;
+    rotatePoint(sector.walls[sector.numWalls-1].x1 - camX,
+                sector.walls[sector.numWalls-1].y1 - camY,
+                -sint, cost, &prevTX, &prevTY);
+    for (int i = 0; i < sector.numWalls; i++, prevTX=tX, prevTY=tY) {
+        const Wall * wall = sector.walls + i;
+        rotatePoint(wall->x1 - camX, wall->y1 - camY, -sint, cost, &tX, &tY);
+
+        fixed x1 = tX, y1 = tY, x2 = prevTX, y2 = prevTY;
         if (!clipFrustum(&x1, &y1, &x2, &y2))
             continue;
 #ifdef DEBUG_LINES
@@ -195,10 +196,10 @@ void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMa
         projectZ(x1, x2, sector.zmin-camZ, sector.zmax-camZ,
                  &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
         trapezoid(scrX1, scrYMin1, scrYMax1, scrX2, scrYMin2, scrYMax2,
-            sector.walls[i].color, sector.floorColor, sector.ceilColor,
+            wall->color, sector.floorColor, sector.ceilColor,
             &xClipMin, &xClipMax, 0);
 
-        const Sector * portalSector = sector.walls[i].portal;
+        const Sector * portalSector = wall->portal;
         if (portalSector) {
             projectZ(x1, x2, portalSector->zmin-camZ, portalSector->zmax-camZ,
                     &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
