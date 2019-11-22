@@ -173,20 +173,20 @@ int main(void) {
         const Sector * newSector = currentSector;
         if (moveX != 0 || moveY != 0) {
             for (int i = 0; i < currentSector->numWalls; i++) {
-                int intX, intY;
                 const Wall * wall1 = currentSector->walls + i;
                 const Wall * wall2 = currentSector->walls + (i+1)%(currentSector->numWalls);
-                intersect(wall1->x1, wall1->y1, wall2->x1, wall2->y1,
-                    camX, camY, camX + moveX, camY + moveY,
-                    &intX, &intY);
-                intX -= camX; intY -= camY;
-                if (ABS(intX) <= ABS(moveX) || ABS(intY) <= ABS(moveY)) {
-                    // collide with wall
+                fixed wallVX = wall1->x1 - wall2->x1;
+                fixed wallVY = wall1->y1 - wall2->y1;
+                // https://stackoverflow.com/a/3461533
+                if (cross(wallVX, wallVY,
+                        camX + moveX - wall2->x1, camY + moveY - wall2->y1) > 0) {
+                    // moved out of sector
                     if (wall2->portal) {
                         newSector = wall2->portal;
                     } else {
-                        //moveX = 0;
-                        //moveY = 0;
+                        fixed project = FDIV(moveX*wallVX+moveY*wallVY, wallVX*wallVX+wallVY*wallVY);
+                        moveX = FMULT(wallVX, project);
+                        moveY = FMULT(wallVY, project);
                     }
                 }
             }
