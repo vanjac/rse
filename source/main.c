@@ -58,12 +58,16 @@ void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
                  fixed * xout, fixed * yout);
 
 void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMax);
-// return if drawn
-int drawWall(fixed x1, fixed y1, fixed z1,
-              fixed x2, fixed y2, fixed z2,
-              int wallColor, int floorColor, int ceilColor,
-              int * xClipMin, int * xClipMax, int drawToClip);
-int trapezoid(int x1, int ymin1, int ymax1,
+// looking down x axis
+// points should be ordered left to right on screen
+// return if on screen
+int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2);
+void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
+               int * outScrX1, int * outScrX2);
+void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
+              int * outScrYMin1, int * outScrYMax1,
+              int * outScrYMin2, int * outScrYMax2);
+void trapezoid(int x1, int ymin1, int ymax1,
                int x2, int ymin2, int ymax2,
                int wallColor, int floorColor, int ceilColor,
                int * xClipMin, int * xClipMax, int drawToClip);
@@ -169,53 +173,57 @@ int main(void) {
 IWRAM_CODE
 __attribute__((target("arm")))
 void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMax) {
-    fixed tX, tY;
+    fixed tX, tY, nextX, nextY;
     rotatePoint(sector.walls[0].x1 - camX, sector.walls[0].y1 - camY,
         -sint, cost, &tX, &tY);
-    for (int i = 0; i < sector.numWalls; i++) {
+    for (int i = 0; i < sector.numWalls; i++, tX=nextX, tY=nextY) {
         Wall nextWall = sector.walls[(i + 1) % sector.numWalls];
-        fixed nextX, nextY;
         rotatePoint(nextWall.x1 - camX, nextWall.y1 - camY,
             -sint, cost, &nextX, &nextY);
-        if (drawWall(nextX, nextY, sector.zmin - camZ,
-            tX, tY, sector.zmax - camZ,
+        
+        fixed x1 = nextX, y1 = nextY, x2 = tX, y2 = tY;
+        if (!clipFrustum(&x1, &y1, &x2, &y2))
+            continue;
+#ifdef DEBUG_LINES
+        continue;
+#endif
+        fixed scrX1, scrX2;
+        projectXY(x1, y1, x2, y2, &scrX1, &scrX2);
+        if (scrX2 <= scrX1 || scrX2 < xClipMin*FUNIT || scrX1 >= xClipMax*FUNIT)
+            continue;
+        fixed scrYMin1, scrYMax1, scrYMin2, scrYMax2;
+        projectZ(x1, x2, sector.zmin-camZ, sector.zmax-camZ,
+                 &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
+        trapezoid(scrX1, scrYMin1, scrYMax1, scrX2, scrYMin2, scrYMax2,
             sector.walls[i].color, sector.floorColor, sector.ceilColor,
-            &xClipMin, &xClipMax, 0)) {
-            const Sector * portalSector = sector.walls[i].portal;
-            if (portalSector) {
-                int newXMin = xClipMin, newXMax = xClipMax;
-                drawWall(nextX, nextY, portalSector->zmin - camZ,
-                        tX, tY, portalSector->zmax - camZ,
-                        0, 0, 0,
-                        &newXMin, &newXMax, 1);
-                    drawSector(*portalSector, sint, cost, newXMin, newXMax);
-            }
+            &xClipMin, &xClipMax, 0);
+
+        const Sector * portalSector = sector.walls[i].portal;
+        if (portalSector) {
+            projectZ(x1, x2, portalSector->zmin-camZ, portalSector->zmax-camZ,
+                    &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
+            int newXMin = xClipMin, newXMax = xClipMax;
+            trapezoid(scrX1, scrYMin1, scrYMax1, scrX2, scrYMin2, scrYMax2,
+                0, 0, 0, &newXMin, &newXMax, 1);
+            drawSector(*portalSector, sint, cost, newXMin, newXMax);
         }
-        tX = nextX;
-        tY = nextY;
     }
 }
 
-// looking down x axis
-// points should be ordered left to right on screen
 IWRAM_CODE
 __attribute__((target("arm")))
-int drawWall(fixed x1, fixed y1, fixed z1,
-              fixed x2, fixed y2, fixed z2,
-              int wallColor, int floorColor, int ceilColor,
-              int * xClipMin, int * xClipMax, int drawToClip) {
+int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2) {
 #ifdef DEBUG_LINES
-    bmp8_line(x1/32 + 120, -y1/32 + 80, x2/32 + 120, -y2/32 + 80,
+    bmp8_line(*x1/32 + 120, -*y1/32 + 80, *x2/32 + 120, -*y2/32 + 80,
               8, (void*)MODE4_FB, 240);
 #endif
-
     // clip points using a 90 degree frustum, defined by two lines (a and b)
     // x - y > 0 && x + y > 0
 
-    int p1OutsideA = x1 - y1 < 0;
-    int p2OutsideA = x2 - y2 < 0;
-    int p1OutsideB = x1 + y1 < 0;
-    int p2OutsideB = x2 + y2 < 0;
+    int p1OutsideA = *x1 - *y1 < 0;
+    int p2OutsideA = *x2 - *y2 < 0;
+    int p1OutsideB = *x1 + *y1 < 0;
+    int p2OutsideB = *x2 + *y2 < 0;
 
     // both points are outside frustum on same side
     if ((p1OutsideA && p2OutsideA) || (p1OutsideB && p2OutsideB)
@@ -223,45 +231,53 @@ int drawWall(fixed x1, fixed y1, fixed z1,
         return 0;
 
     if (p1OutsideA)
-        intersect(x1, y1, x2, y2, 0, 0, FUNIT,  FUNIT, &x1, &y1);
+        intersect(*x1, *y1, *x2, *y2, 0, 0, FUNIT,  FUNIT, x1, y1);
     if (p2OutsideA)
-        intersect(x1, y1, x2, y2, 0, 0, FUNIT,  FUNIT, &x2, &y2);
+        intersect(*x1, *y1, *x2, *y2, 0, 0, FUNIT,  FUNIT, x2, y2);
     // outside B (check again, could have changed with previous clip)
-    if (x1 + y1 < 0)
-        intersect(x1, y1, x2, y2, 0, 0, FUNIT, -FUNIT, &x1, &y1);
-    if (x2 + y2 < 0)
-        intersect(x1, y1, x2, y2, 0, 0, FUNIT, -FUNIT, &x2, &y2);
-
-    if (x1 == 0)
-        x1 = 1;
-    if (x2 == 0)
-        x2 = 1;
+    if (*x1 + *y1 < 0)
+        intersect(*x1, *y1, *x2, *y2, 0, 0, FUNIT, -FUNIT, x1, y1);
+    if (*x2 + *y2 < 0)
+        intersect(*x1, *y1, *x2, *y2, 0, 0, FUNIT, -FUNIT, x2, y2);
 
 #ifdef DEBUG_LINES
-    bmp8_line(x1/32 + 120, -y1/32 + 80, x2/32 + 120, -y2/32 + 80,
-              color&0xff, (void*)MODE4_FB, 240);
-#else
-    return trapezoid(
-        M4WIDTH/2*FUNIT - FDIV(y1*FUNIT, x1)/4,
-        HORIZON*FUNIT - FDIV(z2*FUNIT, x1)/2,
-        HORIZON*FUNIT - FDIV(z1*FUNIT, x1)/2,
-        M4WIDTH/2*FUNIT - FDIV(y2*FUNIT, x2)/4,
-        HORIZON*FUNIT - FDIV(z2*FUNIT, x2)/2,
-        HORIZON*FUNIT - FDIV(z1*FUNIT, x2)/2,
-        wallColor, floorColor, ceilColor,
-        xClipMin, xClipMax, drawToClip);
+    bmp8_line(*x1/32 + 120, -*y1/32 + 80, *x2/32 + 120, -*y2/32 + 80,
+              7, (void*)MODE4_FB, 240);
 #endif
+    // prevent future divide by zero with projection
+    if (*x1 == 0)
+        *x1 = 1;
+    if (*x2 == 0)
+        *x2 = 1;
+    return 1;
+}
+
+IWRAM_CODE
+__attribute__((target("arm")))
+void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
+              int * outScrX1, int * outScrX2) {
+    *outScrX1 = M4WIDTH/2*FUNIT - FDIV(y1*FUNIT, x1)/4;
+    *outScrX2 = M4WIDTH/2*FUNIT - FDIV(y2*FUNIT, x2)/4;
+}
+
+IWRAM_CODE
+__attribute__((target("arm")))
+void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
+              int * outScrYMin1, int * outScrYMax1,
+              int * outScrYMin2, int * outScrYMax2){
+    *outScrYMin1 = HORIZON*FUNIT - FDIV(z2*FUNIT, x1)/2;
+    *outScrYMax1 = HORIZON*FUNIT - FDIV(z1*FUNIT, x1)/2;
+    *outScrYMin2 = HORIZON*FUNIT - FDIV(z2*FUNIT, x2)/2;
+    *outScrYMax2 = HORIZON*FUNIT - FDIV(z1*FUNIT, x2)/2;
 }
 
 IWRAM_CODE
 __attribute__((target("arm")))
 // fixed point coordinates in screen space
-int trapezoid(fixed x1, fixed ymin1, fixed ymax1,
+void trapezoid(fixed x1, fixed ymin1, fixed ymax1,
                fixed x2, fixed ymin2, fixed ymax2,
                int wallColor, int floorColor, int ceilColor,
                int * xClipMin, int * xClipMax, int drawToClip) {
-    if (x2 <= x1 || x2 < (*xClipMin)*FUNIT || x1 >= (*xClipMax)*FUNIT)
-        return 0;
     fixed xDist = x2 - x1;
     fixed minSlope = FDIV(ymin2 - ymin1, xDist);
     fixed maxSlope = FDIV(ymax2 - ymax1, xDist);
@@ -311,5 +327,4 @@ int trapezoid(fixed x1, fixed ymin1, fixed ymax1,
             max += maxSlope;
         }
     }
-    return 1;
 }
