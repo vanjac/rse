@@ -54,19 +54,19 @@ const Sector sectors[2] = {
 void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
                fixed x3, fixed y3, fixed x4, fixed y4,
                fixed * xint, fixed * yint);
-void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
-                 fixed * xout, fixed * yout);
+static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
+    fixed * xout, fixed * yout);
 
 void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMax);
 // looking down x axis
 // points should be ordered left to right on screen
 // return if on screen
-int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2);
-void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
-               int * outScrX1, int * outScrX2);
-void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
-              int * outScrYMin1, int * outScrYMax1,
-              int * outScrYMin2, int * outScrYMax2);
+static inline int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2);
+static inline void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
+    int * outScrX1, int * outScrX2);
+static inline void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
+    int * outScrYMin1, int * outScrYMax1,
+    int * outScrYMin2, int * outScrYMax2);
 void trapezoid(int x1, int ymin1, int ymax1,
                int x2, int ymin2, int ymax2,
                int wallColor, int floorColor, int ceilColor,
@@ -92,8 +92,8 @@ void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
 
 IWRAM_CODE
 __attribute__((target("arm")))
-void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
-                 fixed * xout, fixed * yout) {
+static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
+        fixed * xout, fixed * yout) {
     fixed newx = FMULT(x, cost) - FMULT(y, sint);
     fixed newy = FMULT(y, cost) + FMULT(x, sint);
     *xout = newx;
@@ -226,7 +226,7 @@ void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMa
 
 IWRAM_CODE
 __attribute__((target("arm")))
-int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2) {
+static inline int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2) {
 #ifdef DEBUG_LINES
     bmp8_line(*x1/32 + 120, -*y1/32 + 80, *x2/32 + 120, -*y2/32 + 80,
               8, (void*)MODE4_FB, 240);
@@ -268,17 +268,17 @@ int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2) {
 
 IWRAM_CODE
 __attribute__((target("arm")))
-void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
-              int * outScrX1, int * outScrX2) {
+static inline void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
+        int * outScrX1, int * outScrX2) {
     *outScrX1 = M4WIDTH/2*FUNIT - FDIV(y1*FUNIT, x1)/4;
     *outScrX2 = M4WIDTH/2*FUNIT - FDIV(y2*FUNIT, x2)/4;
 }
 
 IWRAM_CODE
 __attribute__((target("arm")))
-void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
-              int * outScrYMin1, int * outScrYMax1,
-              int * outScrYMin2, int * outScrYMax2){
+static inline void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
+        int * outScrYMin1, int * outScrYMax1,
+        int * outScrYMin2, int * outScrYMax2){
     *outScrYMin1 = HORIZON*FUNIT - FDIV(z2*FUNIT, x1)/2;
     *outScrYMax1 = HORIZON*FUNIT - FDIV(z1*FUNIT, x1)/2;
     *outScrYMin2 = HORIZON*FUNIT - FDIV(z2*FUNIT, x2)/2;
