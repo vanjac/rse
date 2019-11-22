@@ -11,13 +11,6 @@ typedef u16 MODE4_LINE[M4WIDTH];
 
 #define HORIZON 80
 
-fixed camX = 0, camY = 0, camZ = 0;
-
-// for each column
-// rounded up to multiple of 32 so CpuFastSet can be used
-s16 yClipMin[128];
-s16 yClipMax[128];
-
 typedef struct Sector {
     fixed zmin, zmax;
     const struct Wall * walls;
@@ -77,8 +70,6 @@ static inline fixed cross(fixed x1, fixed y1, fixed x2, fixed y2) {
     return FMULT(x1, y2) - FMULT(y1, x2);
 }
 
-IWRAM_CODE
-__attribute__((target("arm")))
 void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
                fixed x3, fixed y3, fixed x4, fixed y4,
                fixed * xint, fixed * yint) {
@@ -101,6 +92,14 @@ static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
     *yout = newy;
 }
 
+fixed camX = 0, camY = 0, camZ = 0;
+const Sector * currentSector;
+
+// for each column
+// rounded up to multiple of 32 so CpuFastSet can be used
+s16 yClipMin[128];
+s16 yClipMax[128];
+
 int main(void) {
 	irqInit();
 	irqEnable(IRQ_VBLANK);
@@ -118,6 +117,7 @@ int main(void) {
     ((vu16*)BG_COLORS)[8] = RGB5(10, 10, 10);
 
     int theta = 0;
+    currentSector = sectors;
 
     while (1) {
         const int zero = 0;
@@ -132,7 +132,7 @@ int main(void) {
         fixed sint = lu_sin(theta) >> 4;
         fixed cost = lu_cos(theta) >> 4;
 
-        drawSector(sectors[0], sint, cost, 0, M4WIDTH);
+        drawSector(*currentSector, sint, cost, 0, M4WIDTH);
 
 #ifdef DEBUG_LINES
         bmp8_line(40, 160, 200, 0, 7, (void*)MODE4_FB, 240);
@@ -146,21 +146,22 @@ int main(void) {
             theta += 128;
         if (buttons & KEY_R)
             theta -= 128;
+        fixed moveX = 0, moveY = 0;
         if (buttons & KEY_UP) {
-            camX += cost / 16;
-            camY += sint / 16;
+            moveX += cost / 16;
+            moveY += sint / 16;
         }
         if (buttons & KEY_DOWN) {
-            camX -= cost / 16;
-            camY -= sint / 16;
+            moveX -= cost / 16;
+            moveY -= sint / 16;
         }
         if (buttons & KEY_RIGHT) {
-            camX += sint / 16;
-            camY -= cost / 16;
+            moveX += sint / 16;
+            moveY -= cost / 16;
         }
         if (buttons & KEY_LEFT) {
-            camX -= sint / 16;
-            camY += cost / 16;
+            moveX -= sint / 16;
+            moveY += cost / 16;
         }
         if (buttons & KEY_A) {
             camZ += 16;
@@ -168,6 +169,31 @@ int main(void) {
         if (buttons & KEY_B) {
             camZ -= 16;
         }
+
+        const Sector * newSector = currentSector;
+        if (moveX != 0 || moveY != 0) {
+            for (int i = 0; i < currentSector->numWalls; i++) {
+                int intX, intY;
+                const Wall * wall1 = currentSector->walls + i;
+                const Wall * wall2 = currentSector->walls + (i+1)%(currentSector->numWalls);
+                intersect(wall1->x1, wall1->y1, wall2->x1, wall2->y1,
+                    camX, camY, camX + moveX, camY + moveY,
+                    &intX, &intY);
+                intX -= camX; intY -= camY;
+                if (ABS(intX) <= ABS(moveX) || ABS(intY) <= ABS(moveY)) {
+                    // collide with wall
+                    if (wall2->portal) {
+                        newSector = wall2->portal;
+                    } else {
+                        //moveX = 0;
+                        //moveY = 0;
+                    }
+                }
+            }
+        }
+        currentSector = newSector;
+        camX += moveX;
+        camY += moveY;
     }
 }
 
@@ -204,9 +230,9 @@ void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMa
                     &portalScrYMin1, &portalScrYMax1, &portalScrYMin2, &portalScrYMax2);
 
             if (portalSector->zmax < sector.zmax)
-            // top wall
-            trapezoid(scrX1, scrYMin1, portalScrYMin1, scrX2, scrYMin2, portalScrYMin2,
-                wall->color, 0, sector.ceilColor,
+                // top wall
+                trapezoid(scrX1, scrYMin1, portalScrYMin1, scrX2, scrYMin2, portalScrYMin2,
+                    wall->color, 0, sector.ceilColor,
                     xClipMin, xClipMax, 1, 0);
             else
                 // ceiling only
@@ -214,10 +240,10 @@ void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMa
                     0, 0, sector.ceilColor,
                     xClipMin, xClipMax, 1, 0);
             if (portalSector->zmin > sector.zmin)
-            // bottom wall
-            trapezoid(scrX1, portalScrYMax1, scrYMax1, scrX2, portalScrYMax2, scrYMax2,
-                wall->color, sector.floorColor, 0,
-                xClipMin, xClipMax, 0, 1);
+                // bottom wall
+                trapezoid(scrX1, portalScrYMax1, scrYMax1, scrX2, portalScrYMax2, scrYMax2,
+                    wall->color, sector.floorColor, 0,
+                    xClipMin, xClipMax, 0, 1);
             else
                 // floor only
                 trapezoid(scrX1, scrYMax1, scrYMax1, scrX2, scrYMax2, scrYMax2,
@@ -324,29 +350,29 @@ void trapezoid(fixed x1, fixed ymin1, fixed ymax1,
     fixed min = ymin1 + FMULT(xstart*FUNIT - x1, minSlope);
     fixed max = ymax1 + FMULT(xstart*FUNIT - x1, maxSlope);
 
-        for (int x = xstart; x < xend; x++) {
-            int min_i = min / FUNIT;
-            if (min_i < yClipMin[x])
-                min_i = yClipMin[x];
-            int max_i = max / FUNIT;
-            if (max_i > yClipMax[x])
-                max_i = yClipMax[x];
-            int y = yClipMin[x];
-            if (ceilColor)
-                for (; y < min_i; y++)
-                    MODE4_FB[y][x] = ceilColor;
-            else
-                y = min_i;
-            for (; y < max_i; y++)
-                MODE4_FB[y][x] = wallColor;
-            if (floorColor)
-                for (; y < yClipMax[x]; y++)
-                    MODE4_FB[y][x] = floorColor;
+    for (int x = xstart; x < xend; x++) {
+        int min_i = min / FUNIT;
+        if (min_i < yClipMin[x])
+            min_i = yClipMin[x];
+        int max_i = max / FUNIT;
+        if (max_i > yClipMax[x])
+            max_i = yClipMax[x];
+        int y = yClipMin[x];
+        if (ceilColor)
+            for (; y < min_i; y++)
+                MODE4_FB[y][x] = ceilColor;
+        else
+            y = min_i;
+        for (; y < max_i; y++)
+            MODE4_FB[y][x] = wallColor;
+        if (floorColor)
+            for (; y < yClipMax[x]; y++)
+                MODE4_FB[y][x] = floorColor;
         if (drawToYClipMin && max_i > yClipMin[x])
             yClipMin[x] = max_i;
         if (drawToYClipMax && min_i < yClipMax[x])
             yClipMax[x] = min_i;
-            min += minSlope;
-            max += maxSlope;
-        }
+        min += minSlope;
+        max += maxSlope;
     }
+}
