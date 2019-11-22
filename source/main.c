@@ -195,18 +195,31 @@ void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMa
         fixed scrYMin1, scrYMax1, scrYMin2, scrYMax2;
         projectZ(x1, x2, sector.zmin-camZ, sector.zmax-camZ,
                  &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
-        trapezoid(scrX1, scrYMin1, scrYMax1, scrX2, scrYMin2, scrYMax2,
-            wall->color, sector.floorColor, sector.ceilColor,
-            &xClipMin, &xClipMax, 0);
 
         const Sector * portalSector = wall->portal;
         if (portalSector) {
+            fixed portalScrYMin1, portalScrYMax1, portalScrYMin2, portalScrYMax2;
             projectZ(x1, x2, portalSector->zmin-camZ, portalSector->zmax-camZ,
-                    &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
+                    &portalScrYMin1, &portalScrYMax1, &portalScrYMin2, &portalScrYMax2);
+
+            // top wall
+            trapezoid(scrX1, scrYMin1, portalScrYMin1, scrX2, scrYMin2, portalScrYMin2,
+                wall->color, 0, sector.ceilColor,
+                &xClipMin, &xClipMax, 0);
+            // bottom wall
+            trapezoid(scrX1, portalScrYMax1, scrYMax1, scrX2, portalScrYMax2, scrYMax2,
+                wall->color, sector.floorColor, 0,
+                &xClipMin, &xClipMax, 0);
+
             int newXMin = xClipMin, newXMax = xClipMax;
-            trapezoid(scrX1, scrYMin1, scrYMax1, scrX2, scrYMin2, scrYMax2,
+            trapezoid(scrX1, portalScrYMin1, portalScrYMax1,
+                scrX2, portalScrYMin2, portalScrYMax2,
                 0, 0, 0, &newXMin, &newXMax, 1);
             drawSector(*portalSector, sint, cost, newXMin, newXMax);
+        } else {
+            trapezoid(scrX1, scrYMin1, scrYMax1, scrX2, scrYMin2, scrYMax2,
+                wall->color, sector.floorColor, sector.ceilColor,
+                &xClipMin, &xClipMax, 0);
         }
     }
 }
@@ -318,12 +331,16 @@ void trapezoid(fixed x1, fixed ymin1, fixed ymax1,
             if (max_i > yClipMax[x])
                 max_i = yClipMax[x];
             int y = yClipMin[x];
-            for (; y < min_i; y++)
-                MODE4_FB[y][x] = ceilColor;
+            if (ceilColor)
+                for (; y < min_i; y++)
+                    MODE4_FB[y][x] = ceilColor;
+            else
+                y = min_i;
             for (; y < max_i; y++)
                 MODE4_FB[y][x] = wallColor;
-            for (; y < yClipMax[x]; y++)
-                MODE4_FB[y][x] = floorColor;
+            if (floorColor)
+                for (; y < yClipMax[x]; y++)
+                    MODE4_FB[y][x] = floorColor;
             min += minSlope;
             max += maxSlope;
         }
