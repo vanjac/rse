@@ -2,6 +2,7 @@
 #include "fixed.h"
 #include "sinlut.h"
 #include "tonc_bmp8.h"
+#include "textures.h"
 
 //#define DEBUG_LINES
 
@@ -107,14 +108,7 @@ int main(void) {
 
 	REG_DISPCNT = MODE_4 | BG2_ON;
 
-    ((vu16*)BG_COLORS)[1] = RGB5(31, 0, 14);
-    ((vu16*)BG_COLORS)[2] = RGB5(0, 14, 14);
-    ((vu16*)BG_COLORS)[3] = RGB5(0, 17, 0);
-    ((vu16*)BG_COLORS)[4] = RGB5(31, 31, 14);
-    ((vu16*)BG_COLORS)[5] = RGB5(0, 0, 31);
-    ((vu16*)BG_COLORS)[6] = RGB5(31, 15, 31);
-    ((vu16*)BG_COLORS)[7] = RGB5(31, 31, 31);
-    ((vu16*)BG_COLORS)[8] = RGB5(10, 10, 10);
+    CpuFastSet(texturesPal, BG_COLORS, texturesPalLen/4);
 
     int theta = 0;
     currentSector = sectors;
