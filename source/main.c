@@ -176,9 +176,10 @@ int main(void) {
 
         const Sector * newSector = currentSector;
         if (moveX != 0 || moveY != 0) {
-            for (int i = 0; i < currentSector->numWalls; i++) {
+            int numWalls = currentSector->numWalls;
+            for (int i = 0; i < numWalls; i++) {
                 const Wall * wall1 = currentSector->walls + i;
-                const Wall * wall2 = currentSector->walls + (i+1)%(currentSector->numWalls);
+                const Wall * wall2 = currentSector->walls + (i+1)%(numWalls);
                 fixed wallVX = wall1->x1 - wall2->x1;
                 fixed wallVY = wall1->y1 - wall2->y1;
                 // https://stackoverflow.com/a/3461533
@@ -210,10 +211,11 @@ void drawSector(Sector sector, fixed sint, fixed cost,
 
     // transformed vertices
     fixed tX, tY, prevTX, prevTY;
-    rotatePoint(sector.walls[sector.numWalls-1].x1 - camX,
-                sector.walls[sector.numWalls-1].y1 - camY,
+    int numWalls = sector.numWalls;
+    rotatePoint(sector.walls[numWalls-1].x1 - camX,
+                sector.walls[numWalls-1].y1 - camY,
                 -sint, cost, &prevTX, &prevTY);
-    for (int i = 0; i < sector.numWalls; i++, prevTX=tX, prevTY=tY) {
+    for (int i = 0; i < numWalls; i++, prevTX=tX, prevTY=tY) {
         const Wall * wall = sector.walls + i;
         rotatePoint(wall->x1 - camX, wall->y1 - camY, -sint, cost, &tX, &tY);
 
