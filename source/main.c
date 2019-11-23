@@ -65,9 +65,9 @@ void drawSector(Sector sector, fixed sint, fixed cost,
 // points should be ordered left to right on screen
 // return if on screen
 static inline int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2);
-static inline void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
+static inline void projectXY(fixed x1recip, fixed y1, fixed x2recip, fixed y2,
     int * outScrX1, int * outScrX2);
-static inline void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
+static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
     int * outScrYMin1, int * outScrYMax1,
     int * outScrYMin2, int * outScrYMax2);
 void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
@@ -96,9 +96,8 @@ __attribute__((target("arm")))
 static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
         fixed * xout, fixed * yout) {
     fixed newx = FMULT(x, cost) - FMULT(y, sint);
-    fixed newy = FMULT(y, cost) + FMULT(x, sint);
+    *yout = FMULT(y, cost) + FMULT(x, sint);
     *xout = newx;
-    *yout = newy;
 }
 
 fixed camX = 0, camY = 0, camZ = 0;
@@ -225,8 +224,9 @@ void drawSector(Sector sector, fixed sint, fixed cost,
 #ifdef DEBUG_LINES
         continue;
 #endif
+        fixed x1recip = FRECIP(x1), x2recip = FRECIP(x2);
         fixed scrX1, scrX2;
-        projectXY(x1, y1, x2, y2, &scrX1, &scrX2);
+        projectXY(x1recip, y1, x2recip, y2, &scrX1, &scrX2);
         int xDrawMin = scrX1 / FUNIT;
         int xDrawMax = scrX2 / FUNIT;
         if (xDrawMax <= xDrawMin || xDrawMax < xClipMin || xDrawMin >= xClipMax)
@@ -237,13 +237,13 @@ void drawSector(Sector sector, fixed sint, fixed cost,
             xDrawMax = xClipMax;
 
         fixed scrYMin1, scrYMax1, scrYMin2, scrYMax2;
-        projectZ(x1, x2, sector.zmin-camZ, sector.zmax-camZ,
+        projectZ(x1recip, x2recip, sector.zmin-camZ, sector.zmax-camZ,
                  &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
 
         const Sector * portalSector = wall->portal;
         if (portalSector) {
             fixed portalScrYMin1, portalScrYMax1, portalScrYMin2, portalScrYMax2;
-            projectZ(x1, x2, portalSector->zmin-camZ, portalSector->zmax-camZ,
+            projectZ(x1recip, x2recip, portalSector->zmin-camZ, portalSector->zmax-camZ,
                     &portalScrYMin1, &portalScrYMax1, &portalScrYMin2, &portalScrYMax2);
 
             // top edge
@@ -331,21 +331,21 @@ static inline int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2) {
 
 IWRAM_CODE
 __attribute__((target("arm")))
-static inline void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
+static inline void projectXY(fixed x1recip, fixed y1, fixed x2recip, fixed y2,
         int * outScrX1, int * outScrX2) {
-    *outScrX1 = M4WIDTH/2*FUNIT - FDIV(y1*FUNIT, x1)/4;
-    *outScrX2 = M4WIDTH/2*FUNIT - FDIV(y2*FUNIT, x2)/4;
+    *outScrX1 = M4WIDTH/2*FUNIT - FMULT(y1*FUNIT, x1recip)/4;
+    *outScrX2 = M4WIDTH/2*FUNIT - FMULT(y2*FUNIT, x2recip)/4;
 }
 
 IWRAM_CODE
 __attribute__((target("arm")))
-static inline void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
+static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
         int * outScrYMin1, int * outScrYMax1,
         int * outScrYMin2, int * outScrYMax2){
-    *outScrYMin1 = HORIZON*FUNIT - FDIV(z2*FUNIT, x1)/2;
-    *outScrYMax1 = HORIZON*FUNIT - FDIV(z1*FUNIT, x1)/2;
-    *outScrYMin2 = HORIZON*FUNIT - FDIV(z2*FUNIT, x2)/2;
-    *outScrYMax2 = HORIZON*FUNIT - FDIV(z1*FUNIT, x2)/2;
+    *outScrYMin1 = HORIZON*FUNIT - FMULT(z2*FUNIT, x1recip)/2;
+    *outScrYMax1 = HORIZON*FUNIT - FMULT(z1*FUNIT, x1recip)/2;
+    *outScrYMin2 = HORIZON*FUNIT - FMULT(z2*FUNIT, x2recip)/2;
+    *outScrYMax2 = HORIZON*FUNIT - FMULT(z1*FUNIT, x2recip)/2;
 }
 
 
