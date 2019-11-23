@@ -6,11 +6,19 @@
 
 //#define DEBUG_LINES
 
+//https://stackoverflow.com/a/3982397
+#define SWAP(x, y) do { typeof(x) SWAP = x; x = y; y = SWAP; } while (0)
+
 #define M4WIDTH 120
 typedef u16 MODE4_LINE[M4WIDTH];
 #define MODE4_FB ((MODE4_LINE *)0x06000000)
 
 #define HORIZON 80
+
+// Y Clip Buffer
+typedef s16 * YCB;
+// num hwords
+#define YCB_SIZE 128
 
 typedef struct Sector {
     fixed zmin, zmax;
@@ -51,7 +59,8 @@ void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
 static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
     fixed * xout, fixed * yout);
 
-void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMax);
+void drawSector(Sector sector, fixed sint, fixed cost,
+                int xClipMin, int xClipMax, YCB minYCB, YCB maxYCB, int depth);
 // looking down x axis
 // points should be ordered left to right on screen
 // return if on screen
@@ -61,11 +70,10 @@ static inline void projectXY(fixed x1, fixed y1, fixed x2, fixed y2,
 static inline void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
     int * outScrYMin1, int * outScrYMax1,
     int * outScrYMin2, int * outScrYMax2);
-void trapezoid(int x1, int ymin1, int ymax1,
-               int x2, int ymin2, int ymax2,
-               int wallColor, int floorColor, int ceilColor,
-               int xClipMin, int xClipMax,
-               int drawToYClipMin, int drawToYClipMax);
+void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
+             int xDrawMin, int xDrawMax,
+             YCB minYCB, YCB maxYCB, YCB outYCB);
+void solidFill(int x1, int x2, YCB minYCB, YCB maxYCB, int color);
 
 static inline fixed cross(fixed x1, fixed y1, fixed x2, fixed y2) {
     return FMULT(x1, y2) - FMULT(y1, x2);
@@ -96,10 +104,9 @@ static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
 fixed camX = 0, camY = 0, camZ = 0;
 const Sector * currentSector;
 
-// for each column
-// rounded up to multiple of 32 so CpuFastSet can be used
-s16 yClipMin[128];
-s16 yClipMax[128];
+// room for 64 YCBs
+//YCB ycbs = (YCB)(VRAM + 81920);
+s16 ycbs[8192];
 
 int main(void) {
 	irqInit();
@@ -110,15 +117,18 @@ int main(void) {
 
     CpuFastSet(texturesPal, BG_COLORS, texturesPalLen/4);
 
+    YCB screenMin = ycbs;
+    YCB screenMax = ycbs + YCB_SIZE;
+    const int zero = 0;
+    const int yMaxFill = SCREEN_HEIGHT | (SCREEN_HEIGHT << 16);
+    // clear ymin/max buffers
+    CpuFastSet(&zero, screenMin, 64 | (1<<24));
+    CpuFastSet(&yMaxFill, screenMax, 64 | (1<<24));
+
     int theta = 0;
     currentSector = sectors;
 
     while (1) {
-        const int zero = 0;
-        const int yMaxFill = SCREEN_HEIGHT | (SCREEN_HEIGHT << 16);
-        // clear ymin/max buffers
-        CpuFastSet(&zero, yClipMin, 64 | (1<<24));
-        CpuFastSet(&yMaxFill, yClipMax, 64 | (1<<24));
 #ifdef DEBUG_LINES
         CpuFastSet(&zero, (void*)VRAM, 9600 | (1<<24));
 #endif
@@ -126,7 +136,7 @@ int main(void) {
         fixed sint = lu_sin(theta) >> 4;
         fixed cost = lu_cos(theta) >> 4;
 
-        drawSector(*currentSector, sint, cost, 0, M4WIDTH);
+        drawSector(*currentSector, sint, cost, 0, M4WIDTH, screenMin, screenMax, 1);
 
 #ifdef DEBUG_LINES
         bmp8_line(40, 160, 200, 0, 7, (void*)MODE4_FB, 240);
@@ -193,7 +203,11 @@ int main(void) {
 
 IWRAM_CODE
 __attribute__((target("arm")))
-void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMax) {
+void drawSector(Sector sector, fixed sint, fixed cost,
+                int xClipMin, int xClipMax, YCB minYCB, YCB maxYCB, int depth) {
+    YCB newYCB1 = ycbs + depth * 2 * YCB_SIZE;
+    YCB newYCB2 = newYCB1 + YCB_SIZE;
+
     // transformed vertices
     fixed tX, tY, prevTX, prevTY;
     rotatePoint(sector.walls[sector.numWalls-1].x1 - camX,
@@ -211,8 +225,15 @@ void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMa
 #endif
         fixed scrX1, scrX2;
         projectXY(x1, y1, x2, y2, &scrX1, &scrX2);
-        if (scrX2 <= scrX1 || scrX2 < xClipMin*FUNIT || scrX1 >= xClipMax*FUNIT)
+        int xDrawMin = scrX1 / FUNIT;
+        int xDrawMax = scrX2 / FUNIT;
+        if (xDrawMax <= xDrawMin || xDrawMax < xClipMin || xDrawMin >= xClipMax)
             continue;
+        if (xDrawMin < xClipMin)
+            xDrawMin = xClipMin;
+        if (xDrawMax > xClipMax)
+            xDrawMax = xClipMax;
+
         fixed scrYMin1, scrYMax1, scrYMin2, scrYMax2;
         projectZ(x1, x2, sector.zmin-camZ, sector.zmax-camZ,
                  &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
@@ -223,39 +244,43 @@ void drawSector(Sector sector, fixed sint, fixed cost, int xClipMin, int xClipMa
             projectZ(x1, x2, portalSector->zmin-camZ, portalSector->zmax-camZ,
                     &portalScrYMin1, &portalScrYMax1, &portalScrYMin2, &portalScrYMax2);
 
-            if (portalSector->zmax < sector.zmax)
+            // top edge
+            ycbLine(scrX1, scrYMin1, scrX2, scrYMin2, xDrawMin, xDrawMax,
+                    minYCB, maxYCB, newYCB1);
+            solidFill(xDrawMin, xDrawMax, minYCB, newYCB1, sector.ceilColor);
+            if (portalSector->zmax < sector.zmax) {
+                SWAP(newYCB1, newYCB2);
                 // top wall
-                trapezoid(scrX1, scrYMin1, portalScrYMin1, scrX2, scrYMin2, portalScrYMin2,
-                    wall->color, 0, sector.ceilColor,
-                    xClipMin, xClipMax, 1, 0);
-            else
-                // ceiling only
-                trapezoid(scrX1, scrYMin1, scrYMin1, scrX2, scrYMin2, scrYMin2,
-                    0, 0, sector.ceilColor,
-                    xClipMin, xClipMax, 1, 0);
-            if (portalSector->zmin > sector.zmin)
-                // bottom wall
-                trapezoid(scrX1, portalScrYMax1, scrYMax1, scrX2, portalScrYMax2, scrYMax2,
-                    wall->color, sector.floorColor, 0,
-                    xClipMin, xClipMax, 0, 1);
-            else
-                // floor only
-                trapezoid(scrX1, scrYMax1, scrYMax1, scrX2, scrYMax2, scrYMax2,
-                    wall->color, sector.floorColor, 0,
-                    xClipMin, xClipMax, 0, 1);
-
-            int newXMin = xClipMin, newXMax = xClipMax;
-            int xstart = scrX1 / FUNIT;
-            int xend = scrX2 / FUNIT;
-            if (xstart > newXMin)
-                newXMin = xstart;
-            if (xend < newXMax)
-                newXMax = xend;
-            drawSector(*portalSector, sint, cost, newXMin, newXMax);
+                ycbLine(scrX1, portalScrYMin1, scrX2, portalScrYMin2, xDrawMin, xDrawMax,
+                        minYCB, maxYCB, newYCB1);
+                solidFill(xDrawMin, xDrawMax, newYCB2, newYCB1, wall->color);
+            }
+            // bottom of portal
+            if (portalSector->zmin > sector.zmin) {
+                ycbLine(scrX1, portalScrYMax1, scrX2, portalScrYMax2, xDrawMin, xDrawMax,
+                        minYCB, maxYCB, newYCB2);
+            } else {
+                ycbLine(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
+                        minYCB, maxYCB, newYCB2);
+            }
+            drawSector(*portalSector, sint, cost, xDrawMin, xDrawMax, newYCB1, newYCB2, depth + 1);
+            if (portalSector->zmin > sector.zmin) {
+                SWAP(newYCB1, newYCB2);
+                ycbLine(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
+                        minYCB, maxYCB, newYCB2);
+                solidFill(xDrawMin, xDrawMax, newYCB1, newYCB2, wall->color);
+            }
+            solidFill(xDrawMin, xDrawMax, newYCB2, maxYCB, sector.floorColor);
         } else {
-            trapezoid(scrX1, scrYMin1, scrYMax1, scrX2, scrYMin2, scrYMax2,
-                wall->color, sector.floorColor, sector.ceilColor,
-                xClipMin, xClipMax, 0, 0);
+            // top edge of wall
+            ycbLine(scrX1, scrYMin1, scrX2, scrYMin2, xDrawMin, xDrawMax,
+                    minYCB, maxYCB, newYCB1);
+            solidFill(xDrawMin, xDrawMax, minYCB, newYCB1, sector.ceilColor);
+            // bottom edge
+            ycbLine(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
+                    minYCB, maxYCB, newYCB2);
+            solidFill(xDrawMin, xDrawMax, newYCB1, newYCB2, wall->color);
+            solidFill(xDrawMin, xDrawMax, newYCB2, maxYCB, sector.floorColor);
         }
     }
 }
@@ -321,52 +346,31 @@ static inline void projectZ(fixed x1, fixed x2, fixed z1, fixed z2,
     *outScrYMax2 = HORIZON*FUNIT - FDIV(z1*FUNIT, x2)/2;
 }
 
+
 IWRAM_CODE
 __attribute__((target("arm")))
-// fixed point coordinates in screen space
-void trapezoid(fixed x1, fixed ymin1, fixed ymax1,
-               fixed x2, fixed ymin2, fixed ymax2,
-               int wallColor, int floorColor, int ceilColor,
-               int xClipMin, int xClipMax,
-               int drawToYClipMin, int drawToYClipMax) {
-    fixed xDist = x2 - x1;
-    fixed minSlope = FDIV(ymin2 - ymin1, xDist);
-    fixed maxSlope = FDIV(ymax2 - ymax1, xDist);
+void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
+             int xDrawMin, int xDrawMax,
+             YCB minYCB, YCB maxYCB, YCB outYCB) {
+    fixed slope = FDIV(y2 - y1, x2 - x1);
+    fixed curY = y1 + FMULT(xDrawMin*FUNIT - x1, slope);
+    for (int x = xDrawMin; x < xDrawMax; x++) {
+        int curY_i = curY / FUNIT;
+        if (curY_i < minYCB[x])
+            curY_i = minYCB[x];
+        else if (curY_i > maxYCB[x])
+            curY_i = maxYCB[x];
+        outYCB[x] = curY_i;
+        curY += slope;
+    }
+}
 
-    int xstart = x1 / FUNIT;
-    int xend = x2 / FUNIT;
-
-    if (xstart < xClipMin)
-        xstart = xClipMin;
-    if (xend > xClipMax)
-        xend = xClipMax;
-
-    fixed min = ymin1 + FMULT(xstart*FUNIT - x1, minSlope);
-    fixed max = ymax1 + FMULT(xstart*FUNIT - x1, maxSlope);
-
-    for (int x = xstart; x < xend; x++) {
-        int min_i = min / FUNIT;
-        if (min_i < yClipMin[x])
-            min_i = yClipMin[x];
-        int max_i = max / FUNIT;
-        if (max_i > yClipMax[x])
-            max_i = yClipMax[x];
-        int y = yClipMin[x];
-        if (ceilColor)
-            for (; y < min_i; y++)
-                MODE4_FB[y][x] = ceilColor;
-        else
-            y = min_i;
-        for (; y < max_i; y++)
-            MODE4_FB[y][x] = wallColor;
-        if (floorColor)
-            for (; y < yClipMax[x]; y++)
-                MODE4_FB[y][x] = floorColor;
-        if (drawToYClipMin && max_i > yClipMin[x])
-            yClipMin[x] = max_i;
-        if (drawToYClipMax && min_i < yClipMax[x])
-            yClipMax[x] = min_i;
-        min += minSlope;
-        max += maxSlope;
+IWRAM_CODE
+__attribute__((target("arm")))
+void solidFill(int x1, int x2, YCB minYCB, YCB maxYCB, int color) {
+    for (int x = x1; x < x2; x++) {
+        int max = maxYCB[x];
+        for (int y = minYCB[x]; y < max; y++)
+            MODE4_FB[y][x] = color;
     }
 }
