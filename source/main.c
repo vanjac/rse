@@ -53,13 +53,13 @@ const Sector sectors[2] = {
     {-256, 256, &walls[5], 4, 0x0303, 0x0202}
 };
 
-void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
+static void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
                fixed x3, fixed y3, fixed x4, fixed y4,
                fixed * xint, fixed * yint);
 static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
     fixed * xout, fixed * yout);
 
-void drawSector(Sector sector, fixed sint, fixed cost,
+static void drawSector(Sector sector, fixed sint, fixed cost,
                 int xClipMin, int xClipMax, YCB minYCB, YCB maxYCB, int depth);
 // looking down x axis
 // points should be ordered left to right on screen
@@ -70,16 +70,16 @@ static inline void projectXY(fixed x1recip, fixed y1, fixed x2recip, fixed y2,
 static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
     int * outScrYMin1, int * outScrYMax1,
     int * outScrYMin2, int * outScrYMax2);
-void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
+static void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
              int xDrawMin, int xDrawMax,
              YCB minYCB, YCB maxYCB, YCB outYCB);
-void solidFill(int x1, int x2, YCB minYCB, YCB maxYCB, int color);
+static void solidFill(int x1, int x2, YCB minYCB, YCB maxYCB, int color);
 
 static inline fixed cross(fixed x1, fixed y1, fixed x2, fixed y2) {
     return FMULT(x1, y2) - FMULT(y1, x2);
 }
 
-void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
+static void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
                fixed x3, fixed y3, fixed x4, fixed y4,
                fixed * xint, fixed * yint) {
     fixed x = cross(x1, y1, x2, y2);
@@ -203,8 +203,8 @@ int main(void) {
 
 IWRAM_CODE
 __attribute__((target("arm")))
-void drawSector(Sector sector, fixed sint, fixed cost,
-                int xClipMin, int xClipMax, YCB minYCB, YCB maxYCB, int depth) {
+static void drawSector(Sector sector, fixed sint, fixed cost,
+        int xClipMin, int xClipMax, YCB minYCB, YCB maxYCB, int depth) {
     YCB newYCB1 = ycbs + depth * 2 * YCB_SIZE;
     YCB newYCB2 = newYCB1 + YCB_SIZE;
 
@@ -351,9 +351,9 @@ static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
 
 IWRAM_CODE
 __attribute__((target("arm")))
-void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
-             int xDrawMin, int xDrawMax,
-             YCB minYCB, YCB maxYCB, YCB outYCB) {
+static void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
+        int xDrawMin, int xDrawMax,
+        YCB minYCB, YCB maxYCB, YCB outYCB) {
     fixed slope = FDIV(y2 - y1, x2 - x1);
     fixed curY = y1 + FMULT(xDrawMin*FUNIT - x1, slope);
     for (int x = xDrawMin; x < xDrawMax; x++) {
@@ -369,7 +369,7 @@ void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
 
 IWRAM_CODE
 __attribute__((target("arm")))
-void solidFill(int x1, int x2, YCB minYCB, YCB maxYCB, int color) {
+static void solidFill(int x1, int x2, YCB minYCB, YCB maxYCB, int color) {
     for (int x = x1; x < x2; x++) {
         int max = maxYCB[x];
         for (int y = minYCB[x]; y < max; y++)
