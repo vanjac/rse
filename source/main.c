@@ -53,9 +53,6 @@ const Sector sectors[2] = {
     {-256, 256, &walls[5], 4, 0x0303, 0x0202}
 };
 
-static void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
-               fixed x3, fixed y3, fixed x4, fixed y4,
-               fixed * xint, fixed * yint);
 static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
     fixed * xout, fixed * yout);
 
@@ -79,16 +76,21 @@ static inline fixed cross(fixed x1, fixed y1, fixed x2, fixed y2) {
     return FMULT(x1, y2) - FMULT(y1, x2);
 }
 
-static void intersect(fixed x1, fixed y1, fixed x2, fixed y2,
-               fixed x3, fixed y3, fixed x4, fixed y4,
-               fixed * xint, fixed * yint) {
-    fixed x = cross(x1, y1, x2, y2);
-    fixed y = cross(x3, y3, x4, y4);
-    fixed det = cross(x1-x2, y1-y2, x3-x4, y3-y4);
+// intersect with frustum lines
+static inline void intersectA(fixed crossX, fixed x1, fixed y1, fixed x2, fixed y2,
+        fixed * xint) {
+    fixed det = -(x1-x2) + y1-y2;
     if (det == 0)
         det = 1;
-    *xint = FDIV(cross(x, x1-x2, y, x3-x4), det);
-    *yint = FDIV(cross(x, y1-y2, y, y3-y4), det);
+    *xint = FDIV(-crossX, det);
+}
+static inline void intersectB(fixed crossX, fixed x1, fixed y1, fixed x2, fixed y2,
+        fixed * xint, fixed * yint) {
+    fixed det = (x1-x2) + y1-y2;
+    if (det == 0)
+        det = 1;
+    *xint = FDIV(-crossX, det);
+    *yint = -(*xint);
 }
 
 IWRAM_CODE
@@ -302,20 +304,23 @@ static inline int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2) {
     int p1OutsideB = *x1 + *y1 < 0;
     int p2OutsideB = *x2 + *y2 < 0;
 
-    // both points are outside frustum on same side
+    // both points outside frustum on same side
+    // or points are backwards
     if ((p1OutsideA && p2OutsideA) || (p1OutsideB && p2OutsideB)
-        || (p2OutsideA && p1OutsideB)) // also this (points are rtl)
+            || (p2OutsideA && !p2OutsideB) || (p1OutsideB && !p1OutsideA))
         return 0;
 
-    if (p1OutsideA)
-        intersect(*x1, *y1, *x2, *y2, 0, 0, FUNIT,  FUNIT, x1, y1);
-    if (p2OutsideA)
-        intersect(*x1, *y1, *x2, *y2, 0, 0, FUNIT,  FUNIT, x2, y2);
-    // outside B (check again, could have changed with previous clip)
-    if (*x1 + *y1 < 0)
-        intersect(*x1, *y1, *x2, *y2, 0, 0, FUNIT, -FUNIT, x1, y1);
-    if (*x2 + *y2 < 0)
-        intersect(*x1, *y1, *x2, *y2, 0, 0, FUNIT, -FUNIT, x2, y2);
+    if (p1OutsideA || p2OutsideB) {
+        fixed crossX = cross(*x1, *y1, *x2, *y2);
+        // TODO: why do I have to do this?? also why do lines shake more
+        fixed newX1 = 0;
+        if (p1OutsideA)
+            intersectA(crossX, *x1, *y1, *x2, *y2, &newX1);
+        if (p2OutsideB)
+            intersectB(crossX, *x1, *y1, *x2, *y2, x2, y2);
+        if (p1OutsideA)
+            *x1 = *y1 = newX1;
+    }
 
 #ifdef DEBUG_LINES
     bmp8_line(*x1/32 + 120, -*y1/32 + 80, *x2/32 + 120, -*y2/32 + 80,
