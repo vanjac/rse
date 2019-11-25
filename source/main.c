@@ -20,6 +20,10 @@ typedef s16 * YCB;
 // num hwords
 #define YCB_SIZE 128
 
+typedef enum {
+    FILL_SOLID, FILL_TEXTURE, FILL_PARALLAX
+} FillType;
+
 typedef struct Sector {
     fixed zmin, zmax;
     const struct Wall * walls;
@@ -29,23 +33,29 @@ typedef struct Sector {
 
 typedef struct Wall {
     fixed x1, y1; // x2 y2 defined by next wall
-    int color;
+    FillType fillType;
+    unsigned int fillNum;
     const struct Sector * portal;
 } Wall;
+
+typedef struct {
+    int widthPwr, heightPwr;
+    u16 * data;
+} Texture;
 
 extern const Sector sectors[2];
 const Wall walls[9] = {
     // sector 0 walls
-    { 4*FUNIT,  4*FUNIT, 0x0101, 0},
-    { 0*FUNIT,  4*FUNIT, 0x0404, &sectors[1]},
-    {-3*FUNIT,  2*FUNIT, 0x0505, 0},
-    {-3*FUNIT, -4*FUNIT, 0x0404, 0},
-    { 4*FUNIT, -4*FUNIT, 0x0606, 0},
+    { 4*FUNIT,  4*FUNIT, FILL_SOLID, 0x0101, 0},
+    { 0*FUNIT,  4*FUNIT, FILL_SOLID, 0x0404, &sectors[1]},
+    {-3*FUNIT,  2*FUNIT, FILL_SOLID, 0x0505, 0},
+    {-3*FUNIT, -4*FUNIT, FILL_SOLID, 0x0404, 0},
+    { 4*FUNIT, -4*FUNIT, FILL_SOLID, 0x0606, 0},
     // sector 1 walls
-    { 4*FUNIT,  4*FUNIT, 0x0101, &sectors[0]},
-    { 4*FUNIT,  7*FUNIT, 0x0606, 0},
-    { 0*FUNIT,  7*FUNIT, 0x0505, 0},
-    { 0*FUNIT,  4*FUNIT, 0x0101, 0}
+    { 4*FUNIT,  4*FUNIT, FILL_SOLID, 0x0101, &sectors[0]},
+    { 4*FUNIT,  7*FUNIT, FILL_SOLID, 0x0606, 0},
+    { 0*FUNIT,  7*FUNIT, FILL_SOLID, 0x0505, 0},
+    { 0*FUNIT,  4*FUNIT, FILL_SOLID, 0x0101, 0}
 };
 
 const Sector sectors[2] = {
@@ -56,8 +66,8 @@ const Sector sectors[2] = {
 static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
     fixed * xout, fixed * yout);
 
-static void drawSector(Sector sector, fixed sint, fixed cost,
-                int xClipMin, int xClipMax, YCB minYCB, YCB maxYCB, int depth);
+static void drawSector(const Sector * sector, fixed sint, fixed cost,
+    int xClipMin, int xClipMax, YCB minYCB, YCB maxYCB, int depth);
 // looking down x axis
 // points should be ordered left to right on screen
 // return if on screen
@@ -68,8 +78,7 @@ static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
     int * outScrYMin1, int * outScrYMax1,
     int * outScrYMin2, int * outScrYMax2);
 static void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
-             int xDrawMin, int xDrawMax,
-             YCB minYCB, YCB maxYCB, YCB outYCB);
+    int xDrawMin, int xDrawMax, YCB minYCB, YCB maxYCB, YCB outYCB);
 static void solidFill(int x1, int x2, YCB minYCB, YCB maxYCB, int color);
 
 static inline fixed cross(fixed x1, fixed y1, fixed x2, fixed y2) {
@@ -137,7 +146,7 @@ int main(void) {
         fixed sint = lu_sin(theta) >> 4;
         fixed cost = lu_cos(theta) >> 4;
 
-        drawSector(*currentSector, sint, cost, 0, M4WIDTH, screenMin, screenMax, 1);
+        drawSector(currentSector, sint, cost, 0, M4WIDTH, screenMin, screenMax, 1);
 
 #ifdef DEBUG_LINES
         bmp8_line(40, 160, 200, 0, 7, (void*)MODE4_FB, 240);
@@ -205,19 +214,19 @@ int main(void) {
 
 IWRAM_CODE
 __attribute__((target("arm")))
-static void drawSector(Sector sector, fixed sint, fixed cost,
+static void drawSector(const Sector * sector, fixed sint, fixed cost,
         int xClipMin, int xClipMax, YCB minYCB, YCB maxYCB, int depth) {
     YCB newYCB1 = ycbs + depth * 2 * YCB_SIZE;
     YCB newYCB2 = newYCB1 + YCB_SIZE;
 
     // transformed vertices
     fixed tX, tY, prevTX, prevTY;
-    int numWalls = sector.numWalls;
-    rotatePoint(sector.walls[numWalls-1].x1 - camX,
-                sector.walls[numWalls-1].y1 - camY,
+    int numWalls = sector->numWalls;
+    rotatePoint(sector->walls[numWalls-1].x1 - camX,
+                sector->walls[numWalls-1].y1 - camY,
                 -sint, cost, &prevTX, &prevTY);
     for (int i = 0; i < numWalls; i++, prevTX=tX, prevTY=tY) {
-        const Wall * wall = sector.walls + i;
+        const Wall * wall = sector->walls + i;
         rotatePoint(wall->x1 - camX, wall->y1 - camY, -sint, cost, &tX, &tY);
 
         fixed x1 = tX, y1 = tY, x2 = prevTX, y2 = prevTY;
@@ -239,7 +248,7 @@ static void drawSector(Sector sector, fixed sint, fixed cost,
             xDrawMax = xClipMax;
 
         fixed scrYMin1, scrYMax1, scrYMin2, scrYMax2;
-        projectZ(x1recip, x2recip, sector.zmin-camZ, sector.zmax-camZ,
+        projectZ(x1recip, x2recip, sector->zmin-camZ, sector->zmax-camZ,
                  &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
 
         const Sector * portalSector = wall->portal;
@@ -251,40 +260,40 @@ static void drawSector(Sector sector, fixed sint, fixed cost,
             // top edge
             ycbLine(scrX1, scrYMin1, scrX2, scrYMin2, xDrawMin, xDrawMax,
                     minYCB, maxYCB, newYCB1);
-            solidFill(xDrawMin, xDrawMax, minYCB, newYCB1, sector.ceilColor);
-            if (portalSector->zmax < sector.zmax) {
+            solidFill(xDrawMin, xDrawMax, minYCB, newYCB1, sector->ceilColor);
+            if (portalSector->zmax < sector->zmax) {
                 SWAP(newYCB1, newYCB2);
                 // top wall
                 ycbLine(scrX1, portalScrYMin1, scrX2, portalScrYMin2, xDrawMin, xDrawMax,
                         minYCB, maxYCB, newYCB1);
-                solidFill(xDrawMin, xDrawMax, newYCB2, newYCB1, wall->color);
+                solidFill(xDrawMin, xDrawMax, newYCB2, newYCB1, wall->fillNum);
             }
             // bottom of portal
-            if (portalSector->zmin > sector.zmin) {
+            if (portalSector->zmin > sector->zmin) {
                 ycbLine(scrX1, portalScrYMax1, scrX2, portalScrYMax2, xDrawMin, xDrawMax,
                         minYCB, maxYCB, newYCB2);
             } else {
                 ycbLine(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
                         minYCB, maxYCB, newYCB2);
             }
-            drawSector(*portalSector, sint, cost, xDrawMin, xDrawMax, newYCB1, newYCB2, depth + 1);
-            if (portalSector->zmin > sector.zmin) {
+            drawSector(portalSector, sint, cost, xDrawMin, xDrawMax, newYCB1, newYCB2, depth + 1);
+            if (portalSector->zmin > sector->zmin) {
                 SWAP(newYCB1, newYCB2);
                 ycbLine(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
                         minYCB, maxYCB, newYCB2);
-                solidFill(xDrawMin, xDrawMax, newYCB1, newYCB2, wall->color);
+                solidFill(xDrawMin, xDrawMax, newYCB1, newYCB2, wall->fillNum);
             }
-            solidFill(xDrawMin, xDrawMax, newYCB2, maxYCB, sector.floorColor);
+            solidFill(xDrawMin, xDrawMax, newYCB2, maxYCB, sector->floorColor);
         } else {
             // top edge of wall
             ycbLine(scrX1, scrYMin1, scrX2, scrYMin2, xDrawMin, xDrawMax,
                     minYCB, maxYCB, newYCB1);
-            solidFill(xDrawMin, xDrawMax, minYCB, newYCB1, sector.ceilColor);
+            solidFill(xDrawMin, xDrawMax, minYCB, newYCB1, sector->ceilColor);
             // bottom edge
             ycbLine(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
                     minYCB, maxYCB, newYCB2);
-            solidFill(xDrawMin, xDrawMax, newYCB1, newYCB2, wall->color);
-            solidFill(xDrawMin, xDrawMax, newYCB2, maxYCB, sector.floorColor);
+            solidFill(xDrawMin, xDrawMax, newYCB1, newYCB2, wall->fillNum);
+            solidFill(xDrawMin, xDrawMax, newYCB2, maxYCB, sector->floorColor);
         }
     }
 }
@@ -357,9 +366,8 @@ static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
 IWRAM_CODE
 __attribute__((target("arm")))
 static void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
-        int xDrawMin, int xDrawMax,
-        YCB minYCB, YCB maxYCB, YCB outYCB) {
-    fixed slope = FDIV(y2 - y1, x2 - x1);
+        int xDrawMin, int xDrawMax, YCB minYCB, YCB maxYCB, YCB outYCB) {
+    fixed slope = FDIV(y2 - y1, x2 - x1); // TODO: store reciprocal to reduce divisions
     fixed curY = y1 + FMULT(xDrawMin*FUNIT - x1, slope);
     for (int x = xDrawMin; x < xDrawMax; x++) {
         int curY_i = curY / FUNIT;
