@@ -77,11 +77,13 @@ static inline void projectXY(fixed x1recip, fixed y1, fixed x2recip, fixed y2,
 static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
     int * outScrYMin1, int * outScrYMax1,
     int * outScrYMin2, int * outScrYMax2);
-static void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
-    int xDrawMin, int xDrawMax, YCB minYCB, YCB maxYCB, YCB outYCB);
-static void solidFill(int xDrawMin, int xDrawMax, YCB minYCB, YCB maxYCB, int color);
-static void ycbSolidFill(fixed x1, fixed y1, fixed x2, fixed y2,
-        int xDrawMin, int xDrawMax, YCB minYCB, YCB maxYCB, YCB inYCB, YCB outYCB, int color);
+static inline void calculateSlope(fixed x1, fixed y1, fixed x2, fixed y2,
+    int xDrawMin, fixed * yStartOut, fixed * slopeOut);
+static void solidFill(int xDrawMin, int xDrawMax,
+    fixed yStart1, fixed slope1, fixed yStart2, fixed slope2,
+    YCB minYCB, YCB maxYCB, int color);
+static inline void ycbLine(int xDrawMin, int xDrawMax, fixed yStart, fixed slope,
+    YCB minYCB, YCB maxYCB, YCB outYCB);
 
 static inline fixed cross(fixed x1, fixed y1, fixed x2, fixed y2) {
     return FMULT(x1, y2) - FMULT(y1, x2);
@@ -253,40 +255,39 @@ static void drawSector(const Sector * sector, fixed sint, fixed cost,
         projectZ(x1recip, x2recip, sector->zmin-camZ, sector->zmax-camZ,
                  &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
 
+        fixed yStart1, slope1, yStart2, slope2;
+        calculateSlope(scrX1, scrYMin1, scrX2, scrYMin2, xDrawMin, &yStart1, &slope1);
+        calculateSlope(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, &yStart2, &slope2);
+        solidFill(xDrawMin, xDrawMax, 0, 0, yStart1, slope1, minYCB, maxYCB, sector->ceilColor);
+        solidFill(xDrawMin, xDrawMax, yStart2, slope2, SCREEN_HEIGHT*FUNIT, 0, minYCB, maxYCB, sector->floorColor);
+
         const Sector * portalSector = wall->portal;
         if (portalSector) {
             fixed portalScrYMin1, portalScrYMax1, portalScrYMin2, portalScrYMax2;
             projectZ(x1recip, x2recip, portalSector->zmin-camZ, portalSector->zmax-camZ,
                     &portalScrYMin1, &portalScrYMax1, &portalScrYMin2, &portalScrYMax2);
 
-            ycbSolidFill(scrX1, scrYMin1, scrX2, scrYMin2, xDrawMin, xDrawMax,
-                minYCB, maxYCB, minYCB, newYCB1, sector->ceilColor);
             if (portalSector->zmax < sector->zmax) {
                 // top wall
-                ycbSolidFill(scrX1, portalScrYMin1, scrX2, portalScrYMin2, xDrawMin, xDrawMax,
-                    minYCB, maxYCB, newYCB1, newYCB1, wall->fillNum);
+                fixed portalYStart1, portalSlope1;
+                calculateSlope(scrX1, portalScrYMin1, scrX2, portalScrYMin2, xDrawMin, &portalYStart1, &portalSlope1);
+                solidFill(xDrawMin, xDrawMax, yStart1, slope1, portalYStart1, portalSlope1,
+                    minYCB, maxYCB, wall->fillNum);
+                yStart1 = portalYStart1; slope1 = portalSlope1;
             }
-            // bottom of portal
-            if (portalSector->zmin > sector->zmin) {
-                ycbLine(scrX1, portalScrYMax1, scrX2, portalScrYMax2, xDrawMin, xDrawMax,
-                        minYCB, maxYCB, newYCB2);
-            } else {
-                ycbLine(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
-                        minYCB, maxYCB, newYCB2);
-            }
-            drawSector(portalSector, sint, cost, xDrawMin, xDrawMax, newYCB1, newYCB2, depth + 1);
             if (portalSector->zmin > sector->zmin) {
                 // bottom wall
-                ycbSolidFill(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
-                    minYCB, maxYCB, newYCB2, newYCB2, wall->fillNum);
+                fixed portalYStart2, portalSlope2;
+                calculateSlope(scrX1, portalScrYMax1, scrX2, portalScrYMax2, xDrawMin, &portalYStart2, &portalSlope2);
+                solidFill(xDrawMin, xDrawMax, portalYStart2, portalSlope2, yStart2, slope2,
+                    minYCB, maxYCB, wall->fillNum);
+                yStart2 = portalYStart2; slope2 = portalSlope2;
             }
-            solidFill(xDrawMin, xDrawMax, newYCB2, maxYCB, sector->floorColor);
+            ycbLine(xDrawMin, xDrawMax, yStart1, slope1, minYCB, maxYCB, newYCB1);
+            ycbLine(xDrawMin, xDrawMax, yStart2, slope2, minYCB, maxYCB, newYCB2);
+            drawSector(portalSector, sint, cost, xDrawMin, xDrawMax, newYCB1, newYCB2, depth + 1);
         } else {
-            ycbSolidFill(scrX1, scrYMin1, scrX2, scrYMin2, xDrawMin, xDrawMax,
-                minYCB, maxYCB, minYCB, newYCB1, sector->ceilColor);
-            ycbSolidFill(scrX1, scrYMax1, scrX2, scrYMax2, xDrawMin, xDrawMax,
-                minYCB, maxYCB, newYCB1, newYCB1, wall->fillNum);
-            solidFill(xDrawMin, xDrawMax, newYCB1, maxYCB, sector->floorColor);
+            solidFill(xDrawMin, xDrawMax, yStart1, slope1, yStart2, slope2, minYCB, maxYCB, wall->fillNum);
         }
     }
 }
@@ -355,47 +356,48 @@ static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
     *outScrYMax2 = HORIZON*FUNIT - FMULT(z1*FUNIT, x2recip)/2;
 }
 
-
-// TODO: store reciprocal to reduce divisions
-#define YCB_FOREACH_START \
-    fixed slope = FDIV(y2 - y1, x2 - x1); \
-    fixed curY = y1 + FMULT(xDrawMin*FUNIT - x1, slope); \
-    for (int x = xDrawMin; x < xDrawMax; x++) { \
-        int curY_i = curY / FUNIT; \
-        if (curY_i < minYCB[x]) \
-            curY_i = minYCB[x]; \
-        else if (curY_i > maxYCB[x]) \
-            curY_i = maxYCB[x];
-        
-#define YCB_FOREACH_END \
-        outYCB[x] = curY_i; \
-        curY += slope; \
-    }
-
 IWRAM_CODE
 __attribute__((target("arm")))
-static void ycbLine(fixed x1, fixed y1, fixed x2, fixed y2,
-        int xDrawMin, int xDrawMax, YCB minYCB, YCB maxYCB, YCB outYCB) {
-    YCB_FOREACH_START
-    YCB_FOREACH_END
+static inline void calculateSlope(fixed x1, fixed y1, fixed x2, fixed y2,
+        int xDrawMin, fixed * yStartOut, fixed * slopeOut) {
+    *slopeOut = FDIV(y2 - y1, x2 - x1); // TODO: store reciprocal to reduce divisions
+    *yStartOut = y1 + FMULT(xDrawMin*FUNIT - x1, *slopeOut);
 }
 
 IWRAM_CODE
 __attribute__((target("arm")))
-static void solidFill(int xDrawMin, int xDrawMax, YCB minYCB, YCB maxYCB, int color) {
+static void solidFill(int xDrawMin, int xDrawMax,
+        fixed yStart1, fixed slope1, fixed yStart2, fixed slope2,
+        YCB minYCB, YCB maxYCB, int color) {
+    fixed y1 = yStart1, y2 = yStart2;
     for (int x = xDrawMin; x < xDrawMax; x++) {
-        int max = maxYCB[x];
-        for (int y = minYCB[x]; y < max; y++)
-            MODE4_FB[y][x] = color;
+        int min = minYCB[x], max = maxYCB[x];
+        int curY1 = y1/FUNIT, curY2 = y2/FUNIT;
+        if (curY1 < max && curY2 > min) {
+            if (curY1 < min)
+                curY1 = min;
+            if (curY2 > max)
+                curY2 = max;
+            for (int y = curY1; y < curY2; y++)
+                MODE4_FB[y][x] = color;
+        }
+        y1 += slope1; y2 += slope2;
     }
 }
 
 IWRAM_CODE
 __attribute__((target("arm")))
-static void ycbSolidFill(fixed x1, fixed y1, fixed x2, fixed y2,
-        int xDrawMin, int xDrawMax, YCB minYCB, YCB maxYCB, YCB inYCB, YCB outYCB, int color) {
-    YCB_FOREACH_START
-    for (int y = inYCB[x]; y < curY_i; y++)
-        MODE4_FB[y][x] = color;
-    YCB_FOREACH_END
+static inline void ycbLine(int xDrawMin, int xDrawMax, fixed yStart, fixed slope,
+        YCB minYCB, YCB maxYCB, YCB outYCB) {
+    fixed y = yStart;
+    for (int x = xDrawMin; x < xDrawMax; x++) {
+        int min = minYCB[x], max = maxYCB[x];
+        int curY = y/FUNIT;
+        if (curY < min)
+            curY = min;
+        if (curY > max)
+            curY = max;
+        outYCB[x] = curY;
+        y += slope;
+    }
 }
