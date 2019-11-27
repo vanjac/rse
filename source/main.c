@@ -235,9 +235,7 @@ static void drawSector(const Sector * sector, fixed sint, fixed cost,
         fixed x1 = tX, y1 = tY, x2 = prevTX, y2 = prevTY;
         if (!clipFrustum(&x1, &y1, &x2, &y2))
             continue;
-#ifdef DEBUG_LINES
-        continue;
-#endif
+
         fixed x1recip = FRECIP(x1), x2recip = FRECIP(x2);
         fixed scrX1, scrX2;
         projectXY(x1recip, y1, x2recip, y2, &scrX1, &scrX2);
@@ -327,6 +325,7 @@ static inline int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2) {
 #ifdef DEBUG_LINES
     bmp8_line(*x1/32 + 120, -*y1/32 + 80, *x2/32 + 120, -*y2/32 + 80,
               7, (void*)MODE4_FB, 240);
+    return 0; // will prevent drawing line
 #endif
     // prevent future divide by zero with projection
     if (*x1 == 0)
