@@ -40,13 +40,13 @@ typedef struct Wall {
 
 typedef struct {
     int widthPwr, heightPwr;
-    u16 * data;
+    const u16 * data;
 } Texture;
 
 extern const Sector sectors[2];
 const Wall walls[9] = {
     // sector 0 walls
-    { 4*FUNIT,  4*FUNIT, FILL_SOLID, 0x0101, 0},
+    { 4*FUNIT,  4*FUNIT, FILL_TEXTURE, 0, 0},
     { 0*FUNIT,  4*FUNIT, FILL_SOLID, 0x0404, &sectors[1]},
     {-3*FUNIT,  2*FUNIT, FILL_SOLID, 0x0505, 0},
     {-3*FUNIT, -4*FUNIT, FILL_SOLID, 0x0404, 0},
@@ -61,6 +61,12 @@ const Wall walls[9] = {
 const Sector sectors[2] = {
     {-256, 512, &walls[0], 5, 0x0202, 0x0303},
     {-256, 256, &walls[5], 4, 0x0303, 0x0202}
+};
+
+const Texture textures[3] = {
+    {5, 5, texturesBitmap},
+    {5, 5, texturesBitmap + 1024},
+    {5, 5, texturesBitmap + 2048}
 };
 
 static inline void rotatePoint(fixed x, fixed y, fixed sint, fixed cost,
@@ -78,11 +84,14 @@ static inline void projectZ(fixed x1recip, fixed x2recip, fixed z,
     int * outScrY1, int * outScrY2);
 static inline void calculateSlope(fixed x1, fixed y1, fixed x2, fixed y2,
     int xDrawMin, fixed * yStartOut, fixed * slopeOut);
+static inline void ycbLine(int xDrawMin, int xDrawMax, fixed yStart, fixed slope,
+    YCB minYCB, YCB maxYCB, YCB outYCB);
 static void solidFill(int xDrawMin, int xDrawMax,
     fixed yStart1, fixed slope1, fixed yStart2, fixed slope2,
     YCB minYCB, YCB maxYCB, int color);
-static inline void ycbLine(int xDrawMin, int xDrawMax, fixed yStart, fixed slope,
-    YCB minYCB, YCB maxYCB, YCB outYCB);
+static void textureFill(int xDrawMin, int xDrawMax,
+    fixed yStart1, fixed slope1, fixed yStart2, fixed slope2,
+    YCB minYCB, YCB maxYCB, Texture texture);
 
 static inline fixed cross(fixed x1, fixed y1, fixed x2, fixed y2) {
     return FMULT(x1, y2) - FMULT(y1, x2);
@@ -284,7 +293,14 @@ static void drawSector(const Sector * sector, fixed sint, fixed cost,
             ycbLine(xDrawMin, xDrawMax, yStart2, slope2, minYCB, maxYCB, newYCB2);
             drawSector(portalSector, sint, cost, xDrawMin, xDrawMax, newYCB1, newYCB2, depth + 1);
         } else {
-            solidFill(xDrawMin, xDrawMax, yStart1, slope1, yStart2, slope2, minYCB, maxYCB, wall->fillNum);
+            switch(wall->fillType) {
+                case FILL_SOLID:
+                    solidFill(xDrawMin, xDrawMax, yStart1, slope1, yStart2, slope2, minYCB, maxYCB, wall->fillNum);
+                    break;
+                case FILL_TEXTURE:
+                    textureFill(xDrawMin, xDrawMax, yStart1, slope1, yStart2, slope2, minYCB, maxYCB, textures[wall->fillNum]);
+                    break;
+            }
         }
     }
 }
@@ -362,25 +378,6 @@ static inline void calculateSlope(fixed x1, fixed y1, fixed x2, fixed y2,
 
 IWRAM_CODE
 __attribute__((target("arm")))
-static void solidFill(int xDrawMin, int xDrawMax,
-        fixed yStart1, fixed slope1, fixed yStart2, fixed slope2,
-        YCB minYCB, YCB maxYCB, int color) {
-    fixed y1 = yStart1, y2 = yStart2;
-    for (int x = xDrawMin; x < xDrawMax; x++) {
-        int min = minYCB[x], max = maxYCB[x];
-        int curY1 = y1/FUNIT, curY2 = y2/FUNIT;
-        if (curY1 < min)
-            curY1 = min;
-        if (curY2 > max)
-            curY2 = max;
-        for (int y = curY1; y < curY2; y++)
-            MODE4_FB[y][x] = color;
-        y1 += slope1; y2 += slope2;
-    }
-}
-
-IWRAM_CODE
-__attribute__((target("arm")))
 static inline void ycbLine(int xDrawMin, int xDrawMax, fixed yStart, fixed slope,
         YCB minYCB, YCB maxYCB, YCB outYCB) {
     fixed y = yStart;
@@ -393,5 +390,63 @@ static inline void ycbLine(int xDrawMin, int xDrawMax, fixed yStart, fixed slope
             curY = max;
         outYCB[x] = curY;
         y += slope;
+    }
+}
+
+IWRAM_CODE
+__attribute__((target("arm")))
+static void solidFill(int xDrawMin, int xDrawMax,
+        fixed yStart1, fixed slope1, fixed yStart2, fixed slope2,
+        YCB minYCB, YCB maxYCB, int color) {
+    fixed y1 = yStart1, y2 = yStart2;
+    for (int x = xDrawMin; x < xDrawMax; x++) {
+        int y = minYCB[x], max = maxYCB[x];
+        int curY1 = y1/FUNIT, curY2 = y2/FUNIT;
+        if (curY1 > y)
+            y = curY1;
+        if (curY2 < max)
+            max = curY2;
+        for (; y < max; y++)
+            MODE4_FB[y][x] = color;
+        y1 += slope1; y2 += slope2;
+    }
+}
+
+IWRAM_CODE
+__attribute__((target("arm")))
+static void textureFill(int xDrawMin, int xDrawMax,
+        fixed yStart1, fixed slope1, fixed yStart2, fixed slope2,
+        YCB minYCB, YCB maxYCB, Texture texture) {
+    int texWidth = 1 << texture.widthPwr;
+    fixed y1 = yStart1, y2 = yStart2;
+    for (int x = xDrawMin; x < xDrawMax; x++) {
+        int y = minYCB[x], max = maxYCB[x];
+        int curY1 = y1/FUNIT, curY2 = y2/FUNIT;
+        int lHeight = curY2 - curY1;
+        if (curY1 > y)
+            y = curY1;
+        if (curY2 < max)
+            max = curY2;
+        if (y >= max)
+            continue;
+
+        int texU = 0;
+        int yyy = (curY1 << texture.widthPwr) + lHeight;
+        for (; (yyy >> texture.widthPwr) < y; yyy += lHeight) {
+            texU++;
+        }
+        int maxYYY = max << texture.widthPwr;
+        for (; yyy < maxYYY; yyy += lHeight) {
+            int color = texture.data[texU];
+            int texelMax = yyy >> texture.widthPwr;
+            for (; y < texelMax; y++)
+                MODE4_FB[y][x] = color;
+            texU++;
+        }
+        // fill in the last texel separately
+        int finalColor = texture.data[texU];
+        for (; y < max; y++)
+            MODE4_FB[y][x] = finalColor;
+        y1 += slope1; y2 += slope2;
     }
 }
