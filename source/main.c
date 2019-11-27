@@ -74,9 +74,8 @@ static void drawSector(const Sector * sector, fixed sint, fixed cost,
 static inline int clipFrustum(fixed * x1, fixed * y1, fixed * x2, fixed * y2);
 static inline void projectXY(fixed x1recip, fixed y1, fixed x2recip, fixed y2,
     int * outScrX1, int * outScrX2);
-static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
-    int * outScrYMin1, int * outScrYMax1,
-    int * outScrYMin2, int * outScrYMax2);
+static inline void projectZ(fixed x1recip, fixed x2recip, fixed z,
+    int * outScrY1, int * outScrY2);
 static inline void calculateSlope(fixed x1, fixed y1, fixed x2, fixed y2,
     int xDrawMin, fixed * yStartOut, fixed * slopeOut);
 static void solidFill(int xDrawMin, int xDrawMax,
@@ -252,8 +251,8 @@ static void drawSector(const Sector * sector, fixed sint, fixed cost,
             xDrawMax = xClipMax;
 
         fixed scrYMin1, scrYMax1, scrYMin2, scrYMax2;
-        projectZ(x1recip, x2recip, sector->zmin-camZ, sector->zmax-camZ,
-                 &scrYMin1, &scrYMax1, &scrYMin2, &scrYMax2);
+        projectZ(x1recip, x2recip, sector->zmax-camZ, &scrYMin1, &scrYMin2);
+        projectZ(x1recip, x2recip, sector->zmin-camZ, &scrYMax1, &scrYMax2);
 
         fixed yStart1, slope1, yStart2, slope2;
         calculateSlope(scrX1, scrYMin1, scrX2, scrYMin2, xDrawMin, &yStart1, &slope1);
@@ -263,12 +262,10 @@ static void drawSector(const Sector * sector, fixed sint, fixed cost,
 
         const Sector * portalSector = wall->portal;
         if (portalSector) {
-            fixed portalScrYMin1, portalScrYMax1, portalScrYMin2, portalScrYMax2;
-            projectZ(x1recip, x2recip, portalSector->zmin-camZ, portalSector->zmax-camZ,
-                    &portalScrYMin1, &portalScrYMax1, &portalScrYMin2, &portalScrYMax2);
-
             if (portalSector->zmax < sector->zmax) {
                 // top wall
+                fixed portalScrYMin1, portalScrYMin2;
+                projectZ(x1recip, x2recip, portalSector->zmax-camZ, &portalScrYMin1, &portalScrYMin2);
                 fixed portalYStart1, portalSlope1;
                 calculateSlope(scrX1, portalScrYMin1, scrX2, portalScrYMin2, xDrawMin, &portalYStart1, &portalSlope1);
                 solidFill(xDrawMin, xDrawMax, yStart1, slope1, portalYStart1, portalSlope1,
@@ -277,6 +274,8 @@ static void drawSector(const Sector * sector, fixed sint, fixed cost,
             }
             if (portalSector->zmin > sector->zmin) {
                 // bottom wall
+                fixed portalScrYMax1, portalScrYMax2;
+                projectZ(x1recip, x2recip, portalSector->zmin-camZ, &portalScrYMax1, &portalScrYMax2);
                 fixed portalYStart2, portalSlope2;
                 calculateSlope(scrX1, portalScrYMax1, scrX2, portalScrYMax2, xDrawMin, &portalYStart2, &portalSlope2);
                 solidFill(xDrawMin, xDrawMax, portalYStart2, portalSlope2, yStart2, slope2,
@@ -347,13 +346,11 @@ static inline void projectXY(fixed x1recip, fixed y1, fixed x2recip, fixed y2,
 
 IWRAM_CODE
 __attribute__((target("arm")))
-static inline void projectZ(fixed x1recip, fixed x2recip, fixed z1, fixed z2,
-        int * outScrYMin1, int * outScrYMax1,
-        int * outScrYMin2, int * outScrYMax2){
-    *outScrYMin1 = HORIZON*FUNIT - FMULT(z2*FUNIT, x1recip)/2;
-    *outScrYMax1 = HORIZON*FUNIT - FMULT(z1*FUNIT, x1recip)/2;
-    *outScrYMin2 = HORIZON*FUNIT - FMULT(z2*FUNIT, x2recip)/2;
-    *outScrYMax2 = HORIZON*FUNIT - FMULT(z1*FUNIT, x2recip)/2;
+static inline void projectZ(fixed x1recip, fixed x2recip, fixed z,
+        int * outScrY1, int * outScrY2) {
+    z *= FUNIT;
+    *outScrY1 = HORIZON*FUNIT - FMULT(z, x1recip)/2;
+    *outScrY2 = HORIZON*FUNIT - FMULT(z, x2recip)/2;
 }
 
 IWRAM_CODE
@@ -373,14 +370,12 @@ static void solidFill(int xDrawMin, int xDrawMax,
     for (int x = xDrawMin; x < xDrawMax; x++) {
         int min = minYCB[x], max = maxYCB[x];
         int curY1 = y1/FUNIT, curY2 = y2/FUNIT;
-        if (curY1 < max && curY2 > min) {
-            if (curY1 < min)
-                curY1 = min;
-            if (curY2 > max)
-                curY2 = max;
-            for (int y = curY1; y < curY2; y++)
-                MODE4_FB[y][x] = color;
-        }
+        if (curY1 < min)
+            curY1 = min;
+        if (curY2 > max)
+            curY2 = max;
+        for (int y = curY1; y < curY2; y++)
+            MODE4_FB[y][x] = color;
         y1 += slope1; y2 += slope2;
     }
 }
